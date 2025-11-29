@@ -14,8 +14,16 @@ const visionHelper = require('../utils/visionHelper');
 
 const fs = require('fs');
 const axios = require('axios');
+const jwt = require('jsonwebtoken');
 
-// Argument parser: supports quotes (" ")
+// ---------------------- TOKEN STORE
+const userTokens = new Map(); // key: cliqUserId, value: JWT
+const getTokenForCliqUser = (cliqUserId) => {
+  if (!cliqUserId) return null;
+  return userTokens.get(cliqUserId) || null;
+};
+
+// ---------------------- ARGUMENT PARSER
 const parseArgs = (text = "") => {
   const re = /"([^"]+)"|'([^']+)'|(\S+)/g;
   const args = [];
@@ -24,45 +32,13 @@ const parseArgs = (text = "") => {
   return args;
 };
 
-// cli response shortcut
+// ---------------------- CLI RESPONSE SHORTCUT
 const respond = (res, msg, attachments) => {
   if (attachments) return res.json({ text: msg, attachments });
   return res.json({ text: msg });
 };
 
-// Role-based UI card (used for widgets later)
-const buildRoleCard = (role, project) => {
-  if (role === 'manager' || role === 'engineer') {
-    return {
-      text: `Project: ${project.name}`,
-      attachments: [{
-        title: 'Manager Actions',
-        text: 'Summary, Predict, Create Task',
-        actions: [
-          { type: 'button', text: 'AI Summary', url: `/open?cmd=summary&proj=${project.code}` },
-          { type: 'button', text: 'Predict Delay', url: `/open?cmd=predict&proj=${project.code}` }
-        ]
-      }]
-    };
-  }
-
-  if (role === 'mistri') {
-    return {
-      text: `Project: ${project.name}`,
-      attachments: [{
-        title: 'Mistri Actions',
-        text: 'Report Progress',
-        actions: [
-          { type: 'button', text: 'Report Progress', url: `/open?cmd=report&proj=${project.code}` }
-        ]
-      }]
-    };
-  }
-
-  return { text: `Project: ${project.name} — Speak or upload photo to report progress.` };
-};
-
-// MAIN COMMAND HANDLER
+// ---------------------- MAIN COMMAND HANDLER
 exports.handleCliqCommand = async (req, res) => {
   try {
     const payload = req.body || {};
@@ -74,58 +50,123 @@ exports.handleCliqCommand = async (req, res) => {
 
     const args = parseArgs(raw.replace(cmd, "").trim());
 
-    // Default help
-    if (!cmd || cmd === "help") {
-      return respond(
-        res,
-        '/createproject "Name"\n' +
-        '/joinproject CODE\n' +
-        '/projects\n' +
-        '/createtask "title" "desc" CODE email?\n' +
-        '/tasks CODE\n' +
-        '/reportissue "title" "desc" CODE [img]\n' +
-        '/attendance CODE email present|absent\n' +
-        '/summary CODE or "text"\n' +
-        '/predictdelay CODE\n' +
-        '/improve CODE\n' +
-        '/analyzeimg IMAGE_URL CODE\n' +
-        '/voice FILE_URL CODE'
-      );
-    }
+    const cliqUserId = payload.user?.id;
+    const cliqUserEmail = payload.user?.email;
 
     const resolveProject = async (code) => {
       if (!code) return null;
       return await Project.findOne({ code });
     };
 
-    // ---------------------- CREATE PROJECT
-    if (cmd === "createproject") {
-      const name = args[0];
-      if (!name) return respond(res, 'Usage: /createproject "Project Name"');
+    // ---------------------- HELP / MAIN MENU
+    if (!cmd || cmd === "bphelp" || cmd === "bp") {
+      return respond(
+        res,
+        `BP Commands:
+/bphelp — Help menu
+/bplogin <email>|<password> — Login
+/bpregister <name>|<email>|<password> — Register
+/bpgetprofile — Fetch user profile
+/bpjoin CODE — Join project
+/bpprojects — List user's projects
+/bptasks CODE — List tasks
+/bptaskcreate "title" "desc" CODE [assigneeEmail] — Create task
+/bptaskdetails TASKID — Task details
+/bpdaylog FILE_URL CODE — Submit day log
+/bpissue "title" "desc" CODE [img] — Report issue
+/bpmaterials — Material request
+/bpattendance CODE email present|absent — Mark attendance
+/bpsummary CODE or "text" — AI summary
+/bprisk CODE — Predict project risks
+/bpacceptorder ORDERID — Accept order
+/bpmarkdelivered ORDERID — Mark order delivered`
+      );
+    }
 
-      const code = Math.random().toString(36).substring(2, 8).toUpperCase();
-      const p = await Project.create({ name, code, members: [] });
+    // ---------------------- BP REGISTER
+    if (cmd === "bpregister") {
+      const input = args.join(" ");
+      const [name, email, password] = input.split("|").map(s => s?.trim());
 
-      return respond(res, `Project created: ${p.name} (${p.code})`);
+      if (!name || !email || !password) {
+        return respond(res, "❌ Usage: /bpregister <name>|<email>|<password>");
+      }
+
+      try {
+        const existingUser = await User.findOne({ email });
+        if (existingUser) return respond(res, "❌ User already exists. Please /bplogin instead.");
+
+        const newUser = await User.create({
+          name,
+          email,
+          password,
+          role: "labor",
+          projects: []
+        });
+
+        const token = jwt.sign({ id: newUser._id, email: newUser.email }, process.env.JWT_SECRET, { expiresIn: "1h" });
+
+        if (cliqUserId && token) userTokens.set(cliqUserId, token);
+
+        return respond(res, `✅ Registration successful\nUser: ${newUser.name}`);
+      } catch (err) {
+        console.error("BP Register error:", err);
+        return respond(res, "❌ Registration failed: server error");
+      }
+    }
+
+    // ---------------------- BP LOGIN
+    if (cmd === "bplogin") {
+      const input = args.join(" ");
+      const [email, password] = input.split("|").map(s => s?.trim());
+
+      if (!email || !password) return respond(res, "❌ Usage: /bplogin <email>|<password>");
+
+      try {
+        const user = await User.findOne({ email });
+        if (!user || user.password !== password) return respond(res, "❌ Invalid credentials");
+
+        const token = jwt.sign({ id: user._id, email: user.email }, process.env.JWT_SECRET, { expiresIn: "1h" });
+        if (cliqUserId && token) userTokens.set(cliqUserId, token);
+
+        return respond(res, `🔐 Login successful\nUser: ${user.name}`);
+      } catch (err) {
+        console.error("BP Login error:", err);
+        return respond(res, "❌ Login failed: server error");
+      }
+    }
+
+    // ---------------------- BP GET PROFILE
+    if (cmd === "bpgetprofile") {
+      const token = getTokenForCliqUser(cliqUserId);
+      if (!token) return respond(res, "❌ You are not logged in. Use /bplogin first.");
+
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const user = await User.findById(decoded.id);
+        if (!user) return respond(res, "❌ User not found");
+
+        return respond(res, `👤 Profile:\nName: ${user.name}\nEmail: ${user.email}`);
+      } catch (err) {
+        console.error("BP Profile error:", err);
+        if (cliqUserId) userTokens.delete(cliqUserId);
+        return respond(res, "❌ Profile error: invalid/expired token");
+      }
     }
 
     // ---------------------- JOIN PROJECT
-    if (cmd === "joinproject") {
+    if (cmd === "bpjoin") {
       const code = args[0];
-      if (!code) return respond(res, "Usage: /joinproject CODE");
+      if (!code) return respond(res, "Usage: /bpjoin CODE");
 
       const project = await resolveProject(code);
       if (!project) return respond(res, "Project not found");
 
-      const cliqEmail = payload?.user?.email ||
-        `${(payload?.user?.name || "cliquser").replace(/\s/g, "").toLowerCase()}@cliq.local`;
-
-      let user = await User.findOne({ email: cliqEmail });
-
+      let user = await User.findOne({ email: cliqUserEmail });
       if (!user) {
         user = await User.create({
           name: payload?.user?.name || "Cliq User",
-          email: cliqEmail,
+          email: cliqUserEmail || `user${Date.now()}@cliq.local`,
           password: Math.random().toString(36).substring(2, 8),
           role: "labor",
           projects: []
@@ -142,240 +183,51 @@ exports.handleCliqCommand = async (req, res) => {
       return respond(res, `Joined project ${project.name}`);
     }
 
-    // ---------------------- PROJECT LIST
-    if (cmd === "projects") {
+    // ---------------------- PROJECTS LIST
+    if (cmd === "bpprojects") {
       const list = (await Project.find())
         .map((p) => `${p.name} (${p.code})`)
         .join("\n") || "No projects";
-
       return respond(res, list);
     }
 
     // ---------------------- CREATE TASK
-    if (cmd === "createtask") {
+    if (cmd === "bptaskcreate") {
       const [title, description, projectCode, assigneeEmail] = args;
-
-      if (!title || !projectCode)
-        return respond(res, "Usage: /createtask \"title\" \"desc\" CODE [assigneeEmail]");
+      if (!title || !projectCode) return respond(res, "Usage: /bptaskcreate \"title\" \"desc\" CODE [assigneeEmail]");
 
       const proj = await resolveProject(projectCode);
       if (!proj) return respond(res, "Project not found");
 
-      let assignee = null;
-      if (assigneeEmail) {
-        assignee = await User.findOne({ email: assigneeEmail });
-      } else {
-        assignee = await aiHelper.suggestAssignee(proj._id, title);
-      }
+      let assignee = assigneeEmail ? await User.findOne({ email: assigneeEmail }) : await aiHelper.suggestAssignee(proj._id, title);
 
-      const task = await Task.create({
-        title,
-        description,
-        project: proj._id,
-        assignedTo: assignee?._id
-      });
-
+      const task = await Task.create({ title, description, project: proj._id, assignedTo: assignee?._id });
       await sendToCliq(`New Task in ${proj.name}: ${task.title}`);
-
       return respond(res, `Task created: ${task.title}`);
     }
 
     // ---------------------- TASKS LIST
-    if (cmd === "tasks") {
+    if (cmd === "bptasks") {
       const code = args[0];
-      if (!code) return respond(res, "Usage: /tasks CODE");
+      if (!code) return respond(res, "Usage: /bptasks CODE");
 
       const proj = await resolveProject(code);
       if (!proj) return respond(res, "Project not found");
 
-      const tasks = await Task.find({ project: proj._id })
-        .populate("assignedTo", "name role");
-
-      return respond(
-        res,
-        tasks.length
-          ? tasks.map((t) => `${t.title} — ${t.status} — ${t.assignedTo?.name || "unassigned"}`).join("\n")
-          : "No tasks"
-      );
+      const tasks = await Task.find({ project: proj._id }).populate("assignedTo", "name role");
+      return respond(res, tasks.length
+        ? tasks.map((t) => `${t.title} — ${t.status} — ${t.assignedTo?.name || "unassigned"}`).join("\n")
+        : "No tasks");
     }
 
-    // ---------------------- REPORT ISSUE
-    if (cmd === "reportissue") {
-      const [title, description, projectCode, imageUrl] = args;
-
-      if (!title || !projectCode)
-        return respond(res, "Usage: /reportissue \"title\" \"desc\" CODE [img-url]");
-
-      const proj = await resolveProject(projectCode);
-      if (!proj) return respond(res, "Project not found");
-
-      let uploaded = null;
-
-      if (imageUrl && imageUrl.startsWith("http")) {
-        const r = await cloudinary.uploader.upload(imageUrl, {
-          folder: "buildproai/issues",
-        });
-        uploaded = r.secure_url;
-      }
-
-      const severity = await aiHelper.classifyIssueSeverity(description, uploaded);
-
-      const issue = await Issue.create({
-        title,
-        description,
-        imageUrl: uploaded,
-        severity,
-        project: proj._id,
-      });
-
-      await sendToCliq(`New Issue in ${proj.name}: ${title}`);
-
-      return respond(res, `Issue reported: ${title}`);
-    }
-
-    // ---------------------- ATTENDANCE
-    if (cmd === "attendance") {
-      const [projectCode, userEmail, status] = args;
-
-      if (!projectCode || !userEmail || !status)
-        return respond(res, "Usage: /attendance CODE email present|absent");
-
-      const proj = await resolveProject(projectCode);
-      if (!proj) return respond(res, "Project not found");
-
-      let u = await User.findOne({ email: userEmail });
-      if (!u) {
-        u = await User.create({
-          name: userEmail.split("@")[0],
-          email: userEmail,
-          password: Math.random().toString(36).substring(2, 8),
-          role: "labor",
-        });
-      }
-
-      const a = await Attendance.create({
-        project: proj._id,
-        user: u._id,
-        status: status === "present" ? "present" : "absent",
-      });
-
-      return respond(res, `${u.name} marked ${a.status} for ${proj.name}`);
-    }
-
-    // ---------------------- LIST ISSUES
-    if (cmd === "listissues") {
-      const code = args[0];
-      if (!code) return respond(res, "Usage: /listissues CODE");
-
-      const proj = await resolveProject(code);
-      if (!proj) return respond(res, "Project not found");
-
-      const issues = await Issue.find({ project: proj._id });
-
-      if (!issues.length) return respond(res, "No issues");
-
-      return respond(
-        res,
-        issues.map((i) => `${i.title} - ${i.severity}`).join("\n")
-      );
-    }
-
-    // ---------------------- SUMMARY
-    if (cmd === "summary") {
-      const maybeCode = args[0];
-
-      // summary by project
-      if (maybeCode && maybeCode.length <= 8) {
-        const proj = await resolveProject(maybeCode);
-        if (!proj) return respond(res, "Project not found");
-
-        const logs = await DayLog.find({ project: proj._id })
-          .sort({ date: -1 })
-          .limit(30);
-
-        const text = logs.map((l) => `- ${l.date.toISOString().slice(0, 10)}: ${l.progress}`)
-          .join("\n");
-
-        const summary = await aiHelper.generateDailySummary(text || "No logs");
-
-        return respond(res, summary);
-      }
-
-      // summary of raw text
-      const content = args.join(" ");
-      if (!content) return respond(res, "Usage: /summary CODE or \"text\"");
-
-      const summary = await aiHelper.generateDailySummary(content);
-      return respond(res, summary);
-    }
-
-    // ---------------------- PREDICT DELAY
-    if (cmd === "predictdelay") {
-      const code = args[0];
-      if (!code) return respond(res, "Usage: /predictdelay CODE");
-
-      const proj = await resolveProject(code);
-      if (!proj) return respond(res, "Project not found");
-
-      const prediction = await aiHelper.predictDelay(proj._id);
-
-      return respond(res, JSON.stringify(prediction));
-    }
-
-    // ---------------------- IMPROVE
-    if (cmd === "improve") {
-      const code = args[0];
-      if (!code) return respond(res, "Usage: /improve CODE");
-
-      const proj = await resolveProject(code);
-      if (!proj) return respond(res, "Project not found");
-
-      const suggestion = await aiHelper.suggestImprovement(proj._id);
-
-      return respond(res, suggestion);
-    }
-
-    // ---------------------- IMAGE ANALYSIS (Vision AI)
-    if (cmd === "analyzeimg") {
-      const [imageUrl, projectCode] = args;
-
-      if (!imageUrl || !projectCode)
-        return respond(res, "Usage: /analyzeimg IMAGE_URL CODE");
-
-      const proj = await resolveProject(projectCode);
-      if (!proj) return respond(res, "Project not found");
-
-      const analysis = await visionHelper.analyzeImage(imageUrl);
-
-      // auto-create issue if required
-      if (analysis?.issues?.length > 0) {
-        const top = analysis.issues[0];
-
-        await Issue.create({
-          title: `Detected: ${top.label}`,
-          description: top.note || "",
-          imageUrl,
-          severity: top.confidence > 0.7 ? "high" : "medium",
-          project: proj._id,
-        });
-
-        await sendToCliq(`Auto Issue in ${proj.name}: ${top.label}`);
-      }
-
-      return respond(res, `Safety score: ${analysis.safety_score || "N/A"}`);
-    }
-
-    // ---------------------- VOICE (STT)
-    if (cmd === "voice") {
+    // ---------------------- DAY LOG
+    if (cmd === "bpdaylog") {
       const [fileUrl, projectCode] = args;
-
-      if (!fileUrl || !projectCode)
-        return respond(res, "Usage: /voice FILE_URL CODE");
+      if (!fileUrl || !projectCode) return respond(res, "Usage: /bpdaylog FILE_URL CODE");
 
       const proj = await resolveProject(projectCode);
       if (!proj) return respond(res, "Project not found");
 
-      // download file to temp
       const tmp = `/tmp/${Date.now()}.ogg`;
       const writer = fs.createWriteStream(tmp);
 
@@ -387,118 +239,66 @@ exports.handleCliqCommand = async (req, res) => {
       });
 
       const transcript = await sttService.transcribeAudio(tmp);
-
       fs.unlinkSync(tmp);
 
-      if (!transcript)
-        return respond(res, "Could not transcribe audio");
+      if (!transcript) return respond(res, "Could not transcribe audio");
 
-      await DayLog.create({
-        project: proj._id,
-        progress: transcript,
-        summary: transcript.slice(0, 200),
-      });
-
+      await DayLog.create({ project: proj._id, progress: transcript, summary: transcript.slice(0, 200) });
       await sendToCliq(`Progress logged for ${proj.name}`);
 
       return respond(res, `Transcribed: ${transcript}`);
     }
 
-    // ---------------------- UNKNOWN
-    return respond(res, "Unknown command. Type /help");
+    // ---------------------- REPORT ISSUE
+    if (cmd === "bpissue") {
+      const [title, description, projectCode, imageUrl] = args;
+      if (!title || !projectCode) return respond(res, "Usage: /bpissue \"title\" \"desc\" CODE [img-url]");
+
+      const proj = await resolveProject(projectCode);
+      if (!proj) return respond(res, "Project not found");
+
+      let uploaded = null;
+      if (imageUrl && imageUrl.startsWith("http")) {
+        const r = await cloudinary.uploader.upload(imageUrl, { folder: "buildproai/issues" });
+        uploaded = r.secure_url;
+      }
+
+      const severity = await aiHelper.classifyIssueSeverity(description, uploaded);
+      const issue = await Issue.create({ title, description, imageUrl: uploaded, severity, project: proj._id });
+      await sendToCliq(`New Issue in ${proj.name}: ${title}`);
+
+      return respond(res, `Issue reported: ${title}`);
+    }
+
+    // ---------------------- IMAGE ANALYSIS
+    if (cmd === "analyzeimg") {
+      const [imageUrl, projectCode] = args;
+      if (!imageUrl || !projectCode) return respond(res, "Usage: /analyzeimg IMAGE_URL CODE");
+
+      const proj = await resolveProject(projectCode);
+      if (!proj) return respond(res, "Project not found");
+
+      const analysis = await visionHelper.analyzeImage(imageUrl);
+      if (analysis?.issues?.length > 0) {
+        const top = analysis.issues[0];
+        await Issue.create({
+          title: `Detected: ${top.label}`,
+          description: top.note || "",
+          imageUrl,
+          severity: top.confidence > 0.7 ? "high" : "medium",
+          project: proj._id
+        });
+        await sendToCliq(`Auto Issue in ${proj.name}: ${top.label}`);
+      }
+
+      return respond(res, `Safety score: ${analysis.safety_score || "N/A"}`);
+    }
+
+    // ---------------------- UNKNOWN COMMAND
+    return respond(res, "Unknown command. Type /bphelp");
+
   } catch (err) {
     console.error("cliq error", err);
     return res.status(500).json({ text: "server error" });
-  }
-};
-
-// Convert message → task
-exports.convertMessageToTask = async (req, res) => {
-  try {
-    const { messageText, projectCode, userEmail } = req.body;
-
-    if (!messageText || !projectCode)
-      return res.status(400).json({ message: "missing" });
-
-    const proj = await Project.findOne({ code: projectCode });
-    if (!proj) return res.status(404).json({ message: "project not found" });
-
-    const assignee = userEmail ? await User.findOne({ email: userEmail }) : null;
-
-    const task = await Task.create({
-      title: messageText.slice(0, 80),
-      description: messageText,
-      project: proj._id,
-      assignedTo: assignee?._id,
-    });
-
-    await sendToCliq(`Task created from message in ${proj.name}: ${task.title}`);
-
-    res.json({ message: "ok", taskId: task._id });
-  } catch (err) {
-    console.error("convertMessageToTask", err);
-    res.status(500).json({ message: "error" });
-  }
-};
-
-// Widget data
-exports.widgetData = async (req, res) => {
-  try {
-    const { projectCode } = req.query;
-
-    if (!projectCode)
-      return res.status(400).json({ message: "projectCode required" });
-
-    const proj = await Project.findOne({ code: projectCode }).populate("members", "name role");
-    if (!proj) return res.status(404).json({ message: "project not found" });
-
-    const tasks = await Task.find({ project: proj._id })
-      .populate("assignedTo", "name role");
-
-    const issues = await Issue.find({ project: proj._id })
-      .sort({ createdAt: -1 });
-
-    const completed = await Task.countDocuments({ project: proj._id, status: "completed" });
-    const pending = await Task.countDocuments({ project: proj._id, status: { $ne: "completed" } });
-
-    res.json({
-      project: proj,
-      tasks,
-      issues,
-      kpis: { completed, pending },
-    });
-  } catch (err) {
-    console.error("widgetData", err);
-    res.status(500).json({ message: "error" });
-  }
-};
-
-// Scheduler
-exports.scheduledDailySummary = async (req, res) => {
-  try {
-    const secret = req.headers["x-scheduler-secret"];
-    if (!secret || secret !== process.env.SCHEDULER_SECRET)
-      return res.status(403).json({ message: "forbidden" });
-
-    const projects = await Project.find();
-
-    for (const proj of projects) {
-      const logs = await DayLog.find({ project: proj._id })
-        .sort({ date: -1 })
-        .limit(30);
-
-      const text = logs
-        .map((l) => `- ${l.date.toISOString().slice(0, 10)}: ${l.progress}`)
-        .join("\n") || "No logs";
-
-      const summary = await aiHelper.generateDailySummary(text);
-
-      await sendToCliq(`Daily Summary for ${proj.name}:\n${summary}`);
-    }
-
-    res.json({ ok: true });
-  } catch (err) {
-    console.error("scheduledDailySummary", err);
-    res.status(500).json({ message: "error" });
   }
 };
