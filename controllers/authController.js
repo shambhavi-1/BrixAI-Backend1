@@ -1,8 +1,10 @@
 // backend/controllers/authController.js
-
-const User = require('../models/User');
-const jwt = require('jsonwebtoken');
-const { signToken } = require('../utils/jwtHelper');
+const User = require("../models/User");
+const jwt = require("jsonwebtoken");
+const {
+  signAccessToken,
+  signRefreshToken,
+} = require("../utils/jwtHelper");
 
 // USER REGISTER
 exports.signup = async (req, res) => {
@@ -11,17 +13,22 @@ exports.signup = async (req, res) => {
 
     const exists = await User.findOne({ email });
     if (exists) {
-      return res.status(400).json({ message: 'User already exists' });
+      return res.status(400).json({ message: "User already exists" });
     }
 
     const user = await User.create({ name, email, password, role });
 
-    const token = signToken(user);
-    return res.json({ token, user });
+    const accessToken = signAccessToken(user);
+    const refreshToken = signRefreshToken(user);
+
+    user.refreshToken = refreshToken;
+    await user.save();
+
+    return res.json({ accessToken, refreshToken, user });
 
   } catch (err) {
-    console.error('Signup Error:', err.message);
-    return res.status(500).json({ message: 'Signup failed' });
+    console.error("Signup Error:", err.message);
+    return res.status(500).json({ message: "Signup failed" });
   }
 };
 
@@ -31,34 +38,45 @@ exports.login = async (req, res) => {
     const { email, password } = req.body;
 
     const user = await User.findOne({ email });
-    if (!user) return res.status(404).json({ message: 'User not found' });
+    if (!user) return res.status(404).json({ message: "User not found" });
 
     const match = await user.matchPassword(password);
-    if (!match) return res.status(401).json({ message: 'Invalid credentials' });
+    if (!match)
+      return res.status(401).json({ message: "Invalid credentials" });
 
-    const token = signToken(user);
-    return res.json({ token, user });
+    const accessToken = signAccessToken(user);
+    const refreshToken = signRefreshToken(user);
+
+    user.refreshToken = refreshToken;
+    await user.save();
+
+    return res.json({ accessToken, refreshToken, user });
 
   } catch (err) {
-    console.error('Login Error:', err.message);
-    return res.status(500).json({ message: 'Login failed' });
+    console.error("Login Error:", err.message);
+    return res.status(500).json({ message: "Login failed" });
   }
 };
 
 // REFRESH TOKEN
 exports.refreshToken = async (req, res) => {
   try {
-    const { token } = req.body;
+    const { refreshToken } = req.body;
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (!refreshToken)
+      return res.status(400).json({ message: "Refresh token required" });
+
+    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
     const user = await User.findById(decoded.id);
 
-    if (!user) return res.status(404).json({ message: 'User not found' });
+    if (!user || user.refreshToken !== refreshToken)
+      return res.status(401).json({ message: "Invalid refresh token" });
 
-    const newToken = signToken(user);
-    return res.json({ token: newToken, user });
+    const newAccessToken = signAccessToken(user);
+
+    return res.json({ accessToken: newAccessToken });
 
   } catch (err) {
-    return res.status(401).json({ message: 'Invalid token' });
+    return res.status(401).json({ message: "Invalid refresh token" });
   }
 };
