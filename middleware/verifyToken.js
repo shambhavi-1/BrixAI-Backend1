@@ -1,20 +1,19 @@
 // middleware/verifyToken.js
-const tokenStore = require("../config/tokenStore");
+const jwt = require("jsonwebtoken");
 
 module.exports = (req, res, next) => {
-  const authHeader = req.headers.authorization || req.headers.Authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "Token invalid" });
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Invalid token" });
   }
 
-  const token = authHeader.split(" ")[1].trim();
-  const user = tokenStore[token];
+  const token = authHeader.split(" ")[1];
 
-  if (!user) {
-    return res.status(401).json({ message: "Token invalid" });
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded; // attach user info
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: "Token expired or invalid" });
   }
-
-  // attach user object to request for all routes to use
-  req.user = user;
-  next();
 };
