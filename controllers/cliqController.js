@@ -84,36 +84,23 @@ exports.handleCliqCommand = async (req, res) => {
     }
 
     // ---------------------- BP REGISTER
-if (cmd === "bpregister") {
+    if (cmd === "bpregister") {
   const input = args.join(" ");
   const [name, email, password] = input.split("|").map(s => s?.trim());
 
   if (!name || !email || !password) {
-    return respond(res, "❌ Usage: /bpregister <name>|<email>|<password>");
+    return respond(res, "❌ Usage: /bpregister Name|email|password");
   }
 
   try {
-    let user = await User.findOne({ email });
-    if (user) return respond(res, "❌ User already exists");
-
-    user = await User.create({
-      name,
-      email,
-      password,
-      role: "labor",  // default role
+    const response = await axios.post(`${process.env.API_BASE_URL}/auth/register`, {
+      name, email, password
     });
 
-    const accessToken = signAccessToken(user);
-    const refreshToken = signRefreshToken(user);
-
-    // Store refresh token in user document
-    user.refreshToken = refreshToken;
-    await user.save();
-
-    return respond(res, `✅ Registration successful\nAccess Token: ${accessToken}`);
+    return respond(res, `✅ Registration successful for ${response.data.user.name}`);
   } catch (err) {
-    console.error("BP Register error:", err.message);
-    return respond(res, `❌ Registration failed: ${err.message}`);
+    console.error("BP Register error:", err.response?.data || err.message);
+    return respond(res, `❌ Registration failed: ${err.response?.data?.message || "error"}`);
   }
 }
 
