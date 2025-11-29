@@ -84,7 +84,7 @@ exports.handleCliqCommand = async (req, res) => {
     }
 
     // ---------------------- BP REGISTER
-    if (cmd === "bpregister") {
+if (cmd === "bpregister") {
   const input = args.join(" ");
   const [name, email, password] = input.split("|").map(s => s?.trim());
 
@@ -93,22 +93,32 @@ exports.handleCliqCommand = async (req, res) => {
   }
 
   try {
-    const response = await axios.post(`${process.env.API_BASE_URL}/auth/register`, {
+    // 🚨 MOST IMPORTANT: Must be a valid URL in your .env
+    const apiUrl = `${process.env.API_BASE_URL}/auth/register`;
+
+    const response = await axios.post(apiUrl, {
       name,
       email,
       password,
       role: "labor"
     });
 
-    // Optionally store token for Cliq login right away
-    if (cliqUserId && response.data.token) {
-      userTokens.set(cliqUserId, response.data.token);
+    // If token exists, save it for later commands
+    if (cliqUserId && response.data.accessToken) {
+      userTokens.set(cliqUserId, response.data.accessToken);
     }
 
-    return respond(res, `✅ Registration successful for ${response.data.user.name}`);
+    return respond(
+      res,
+      `✅ Registration successful for ${response.data.user.name}`
+    );
+
   } catch (err) {
     console.error("BP Register error:", err.response?.data || err.message);
-    return respond(res, `❌ Registration failed: ${err.response?.data?.message || "error"}`);
+    return respond(
+      res,
+      `❌ Registration failed: ${err.response?.data?.message || "Server error"}`
+    );
   }
 }
 
@@ -307,3 +317,4 @@ if (cmd === "bplogin") {
     return res.status(500).json({ text: "server error" });
   }
 };
+
