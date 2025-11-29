@@ -1,11 +1,25 @@
-// backend/utils/jwtHelper.js
-const jwt = require('jsonwebtoken');
+// utils/jwtHelper.js
+const jwt = require("jsonwebtoken");
 
-function signToken(user) {
-  // Keep payload small
-  const payload = { id: user._id, role: user.role, email: user.email };
-  const token = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '7d' });
-  return token;
-}
+// Access Token: 1 hour
+const signAccessToken = (user) => {
+  return jwt.sign(
+    { id: user._id, role: user.role },
+    process.env.JWT_SECRET,
+    { expiresIn: "1h" }
+  );
+};
 
-module.exports = { signToken };
+// Refresh Token: 30 days
+const signRefreshToken = (user) => {
+  return jwt.sign(
+    { id: user._id },
+    process.env.JWT_REFRESH_SECRET,
+    { expiresIn: "30d" }
+  );
+};
+
+module.exports = {
+  signAccessToken,
+  signRefreshToken
+};
