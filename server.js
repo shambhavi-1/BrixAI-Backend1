@@ -26,6 +26,7 @@ app.get("/", (req, res) => res.send("BuildPro AI backend running..."));
 const authRoutes = require("./routes/authRoutes");
 app.use("/api/auth", authRoutes);
 
+app.use("/api/cliq", cliqRoutes);
 
 // Protect all routes below
 app.use(verifyToken);
@@ -38,7 +39,7 @@ app.use("/api/issues", issueRoutes);
 app.use("/api/materials", materialRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/ai", aiRoutes);
-app.use("/api/cliq", cliqRoutes);
+
 
 // test route to inspect req.user quickly
 app.get("/api/test-token", (req, res) => {
