@@ -84,36 +84,38 @@ exports.handleCliqCommand = async (req, res) => {
     }
 
     // ---------------------- BP REGISTER
-    if (cmd === "bpregister") {
-      const input = args.join(" ");
-      const [name, email, password] = input.split("|").map(s => s?.trim());
+if (cmd === "bpregister") {
+  const input = args.join(" ");
+  const [name, email, password] = input.split("|").map(s => s?.trim());
 
-      if (!name || !email || !password) {
-        return respond(res, "❌ Usage: /bpregister <name>|<email>|<password>");
-      }
+  if (!name || !email || !password) {
+    return respond(res, "❌ Usage: /bpregister <name>|<email>|<password>");
+  }
 
-      try {
-        const existingUser = await User.findOne({ email });
-        if (existingUser) return respond(res, "❌ User already exists. Please /bplogin instead.");
+  try {
+    let user = await User.findOne({ email });
+    if (user) return respond(res, "❌ User already exists");
 
-        const newUser = await User.create({
-          name,
-          email,
-          password,
-          role: "labor",
-          projects: []
-        });
+    user = await User.create({
+      name,
+      email,
+      password,
+      role: "labor",  // default role
+    });
 
-        const token = jwt.sign({ id: newUser._id, email: newUser.email }, process.env.JWT_SECRET, { expiresIn: "1h" });
+    const accessToken = signAccessToken(user);
+    const refreshToken = signRefreshToken(user);
 
-        if (cliqUserId && token) userTokens.set(cliqUserId, token);
+    // Store refresh token in user document
+    user.refreshToken = refreshToken;
+    await user.save();
 
-        return respond(res, `✅ Registration successful\nUser: ${newUser.name}`);
-      } catch (err) {
-        console.error("BP Register error:", err);
-        return respond(res, "❌ Registration failed: server error");
-      }
-    }
+    return respond(res, `✅ Registration successful\nAccess Token: ${accessToken}`);
+  } catch (err) {
+    console.error("BP Register error:", err.message);
+    return respond(res, `❌ Registration failed: ${err.message}`);
+  }
+}
 
     // ---------------------- BP LOGIN
     if (cmd === "bplogin") {
@@ -302,3 +304,4 @@ exports.handleCliqCommand = async (req, res) => {
     return res.status(500).json({ text: "server error" });
   }
 };
+
