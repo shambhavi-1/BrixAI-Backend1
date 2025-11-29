@@ -117,26 +117,34 @@ if (cmd === "bpregister") {
   }
 }
 
-    // ---------------------- BP LOGIN
-    if (cmd === "bplogin") {
-      const input = args.join(" ");
-      const [email, password] = input.split("|").map(s => s?.trim());
 
-      if (!email || !password) return respond(res, "❌ Usage: /bplogin <email>|<password>");
+    // BP LOGIN
+if (cmd === "bplogin") {
+  const input = args.join(" ");
+  const [email, password] = input.split("|").map(s => s?.trim());
 
-      try {
-        const user = await User.findOne({ email });
-        if (!user || user.password !== password) return respond(res, "❌ Invalid credentials");
+  if (!email || !password) {
+    return respond(res, "❌ Usage: /bplogin <email>|<password>");
+  }
 
-        const token = jwt.sign({ id: user._id, email: user.email }, process.env.JWT_SECRET, { expiresIn: "1h" });
-        if (cliqUserId && token) userTokens.set(cliqUserId, token);
+  try {
+    const response = await axios.post(`${process.env.API_BASE_URL}/auth/login`, {
+      email,
+      password
+    });
 
-        return respond(res, `🔐 Login successful\nUser: ${user.name}`);
-      } catch (err) {
-        console.error("BP Login error:", err);
-        return respond(res, "❌ Login failed: server error");
-      }
+    const token = response.data.token; 
+    const cliqUserId = payload.user?.id;
+
+    if (cliqUserId && token) {
+      userTokens.set(cliqUserId, token);
     }
+
+    return respond(res, `🔐 Login successful\nUser: ${response.data.user.name}`);
+  } catch (err) {
+    return respond(res, `❌ Login failed: ${err.response?.data?.message || "error"}`);
+  }
+}
 
     // ---------------------- BP GET PROFILE
     if (cmd === "bpgetprofile") {
@@ -304,4 +312,3 @@ if (cmd === "bpregister") {
     return res.status(500).json({ text: "server error" });
   }
 };
-
