@@ -94,8 +94,16 @@ exports.handleCliqCommand = async (req, res) => {
 
   try {
     const response = await axios.post(`${process.env.API_BASE_URL}/auth/register`, {
-      name, email, password
+      name,
+      email,
+      password,
+      role: "labor"
     });
+
+    // Optionally store token for Cliq login right away
+    if (cliqUserId && response.data.token) {
+      userTokens.set(cliqUserId, response.data.token);
+    }
 
     return respond(res, `✅ Registration successful for ${response.data.user.name}`);
   } catch (err) {
