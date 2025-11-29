@@ -84,7 +84,7 @@ exports.handleCliqCommand = async (req, res) => {
     }
 
     // ---------------------- BP REGISTER
-    if (cmd === "bpregister") {
+if (cmd === "bpregister") {
   const input = args.join(" ");
   const [name, email, password] = input.split("|").map(s => s?.trim());
 
@@ -93,22 +93,22 @@ exports.handleCliqCommand = async (req, res) => {
   }
 
   try {
-    const response = await axios.post(`${process.env.API_BASE_URL}/auth/register`, {
-      name,
-      email,
-      password,
-      role: "labor"
-    });
+    const response = await axios.post(
+      `${process.env.API_BASE_URL}/auth/register`,
+      { name, email, password },
+      { headers: { "Content-Type": "application/json" } }
+    );
 
-    // Optionally store token for Cliq login right away
-    if (cliqUserId && response.data.token) {
-      userTokens.set(cliqUserId, response.data.token);
-    }
-
-    return respond(res, `✅ Registration successful for ${response.data.user.name}`);
+    // 🔥 IMPORTANT FIX:
+    // NEVER RETURN RAW BACKEND JSON TO CLIQ
+    return respond(res, `✅ Registration successful for *${name}*`);
+    
   } catch (err) {
     console.error("BP Register error:", err.response?.data || err.message);
-    return respond(res, `❌ Registration failed: ${err.response?.data?.message || "error"}`);
+
+    // 🔥 IMPORTANT FIX: show clean message
+    const msg = err.response?.data?.message || "Registration failed";
+    return respond(res, `❌ ${msg}`);
   }
 }
 
