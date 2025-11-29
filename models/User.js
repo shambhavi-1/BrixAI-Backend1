@@ -1,17 +1,27 @@
 // backend/models/User.js
-const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
+const mongoose = require("mongoose");
+const bcrypt = require("bcryptjs");
 
-const UserSchema = new mongoose.Schema({
-  name: String,
-  email: { type: String, unique: true },
-  password: String,
-  role: { type: String, enum: ['engineer','mistri','manager','labor'], default: 'labor' },
-  projects: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Project' }]
-}, { timestamps: true });
+const UserSchema = new mongoose.Schema(
+  {
+    name: String,
+    email: { type: String, unique: true },
+    password: String,
+    role: {
+      type: String,
+      enum: ["engineer", "mistri", "manager", "labor"],
+      default: "labor",
+    },
 
-UserSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) return next();
+    refreshToken: { type: String, default: null },
+
+    projects: [{ type: mongoose.Schema.Types.ObjectId, ref: "Project" }],
+  },
+  { timestamps: true }
+);
+
+UserSchema.pre("save", async function (next) {
+  if (!this.isModified("password")) return next();
   this.password = await bcrypt.hash(this.password, 10);
   next();
 });
@@ -20,5 +30,4 @@ UserSchema.methods.matchPassword = function (pw) {
   return bcrypt.compare(pw, this.password);
 };
 
-// FIX: prevent OverwriteModelError
-module.exports = mongoose.models.User || mongoose.model('User', UserSchema);
+module.exports = mongoose.models.User || mongoose.model("User", UserSchema);
