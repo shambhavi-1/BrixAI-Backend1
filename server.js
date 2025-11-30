@@ -7,6 +7,7 @@ const bodyParser = require("body-parser");
 const connectDB = require("./config/db");
 const verifyToken = require("./middleware/verifyToken");
 
+// Import routes
 const projectRoutes = require("./routes/projectRoutes");
 const taskRoutes = require("./routes/taskRoutes");
 const daylogRoutes = require("./routes/daylogRoutes");
@@ -17,31 +18,42 @@ const aiRoutes = require("./routes/aiRoutes");
 const cliqRoutes = require("./routes/cliqRoutes");
 const webhookRoutes = require("./routes/webhookRoutes");
 const widgetRoutes = require("./routes/widgetRoutes");
+const authRoutes = require("./routes/authRoutes");
 
 const app = express();
-app.use(cors());
+
+// --- MIDDLEWARE --- //
+
+// CORS configuration for your frontend (Vercel)
+app.use(cors({
+  origin: process.env.FRONTEND_URL || "https://brix-ai-front-end.vercel.app",
+  credentials: true, // if you use cookies or auth headers
+}));
+
+// Parse JSON request bodies
 app.use(bodyParser.json());
 
 // Serve static widget files for Zoho Cliq integration
 app.use('/widget', express.static(path.join(__dirname, 'widget')));
 
-// Public basic route for healthcheck
-app.get("/", (req, res) => res.send("BrixAI backend running..."));
+// --- PUBLIC ROUTES --- //
 
-// If you add authRoutes later, mount them BEFORE verifyToken:
-const authRoutes = require("./routes/authRoutes");
+// Health check
+app.get("/", (req, res) => res.send("🚀 BrixAI backend running..."));
+app.get("/api/health", (req, res) => res.json({ status: "ok" }));
+
+// Authentication routes
 app.use("/api/auth", authRoutes);
 
+// Public routes
 app.use("/api/cliq", cliqRoutes);
 app.use("/api/webhooks", webhookRoutes);
 
-// Protect all routes below
-app.use(verifyToken);
+// --- PROTECTED ROUTES --- //
+app.use(verifyToken); // All routes below require valid JWT
 
-// Widget routes (public for iframe embedding)
 app.use("/api/widget", widgetRoutes);
 
-// Protected routes
 app.use("/api/projects", projectRoutes);
 app.use("/api/tasks", taskRoutes);
 app.use("/api/daylogs", daylogRoutes);
@@ -50,14 +62,15 @@ app.use("/api/materials", materialRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/ai", aiRoutes);
 
-// test route to inspect req.user quickly
+// Test route to check JWT
 app.get("/api/test-token", (req, res) => {
   res.json({ message: "Token OK", user: req.user });
 });
 
-// Connect to MongoDB
+// --- DATABASE CONNECTION --- //
 connectDB();
 
+// --- SERVER LISTEN --- //
 const PORT = process.env.PORT || 5000;
 const HOST = process.env.HOST || '0.0.0.0';
 
